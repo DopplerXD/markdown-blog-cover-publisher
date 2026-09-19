@@ -58,6 +58,14 @@ IMAGE_SIZE = "1024*576"
 IMAGE_OUTPUT_FORMAT = "png"
 IMAGE_PROMPT_MAX_CHARS = 4200
 
+# Text is optional and should fit the scene rather than default to a centered
+# headline. Modes: "auto", "always", or "never".
+COVER_TEXT_MODE = "auto"
+COVER_TEXT_MIN_CHARS = 2
+COVER_TEXT_MAX_CHARS = 12
+COVER_TEXT_OVERRIDES: dict[str, str | None] = {}
+COVER_TEXT_PRESENTATION_OVERRIDES: dict[str, str] = {}
+
 # General HTTP API customization. Set a different request/response adapter below
 # if another provider does not use the DashScope message format.
 HTTP_TIMEOUT_SECONDS = 180
@@ -89,6 +97,9 @@ class Article:
     source_text: str
     summary: str = ""
     summary_source: str = "local"
+    text_mode: str = "auto"
+    cover_text: str = ""
+    text_presentation: str = ""
     prompt: str = ""
     candidates: list[Path] = field(default_factory=list)
 
@@ -152,6 +163,33 @@ def article_title(text: str, path: Path) -> str:
         return (match.group(1) or match.group(2)).strip()
     heading = re.search(r"(?m)^#\s+(.+?)\s*$", text[body_start:])
     return heading.group(1).strip() if heading else path.stem.replace("-", " ").replace("_", " ")
+
+
+def text_mode_for(title: str) -> str:
+    if COVER_TEXT_MODE not in {"auto", "always", "never"}:
+        raise RuntimeError("COVER_TEXT_MODE must be 'auto', 'always', or 'never'")
+    if title in COVER_TEXT_OVERRIDES:
+        return "always" if (COVER_TEXT_OVERRIDES[title] or "").strip() else "never"
+    return COVER_TEXT_MODE
+
+
+def topic_text(title: str, mode: str) -> str:
+    if mode == "never":
+        return ""
+    if title in COVER_TEXT_OVERRIDES:
+        return (COVER_TEXT_OVERRIDES[title] or "").strip()
+
+    cleaned = re.sub(r"[`*_#]", "", title).strip()
+    primary = re.split(r"\s*(?:：|:|—|–|\||\s+-\s+)\s*", cleaned, maxsplit=1)[0].strip()
+    primary = re.sub(r"[\s，。！？、；,.!?;]+", "", primary)
+    if COVER_TEXT_MIN_CHARS <= len(primary) <= COVER_TEXT_MAX_CHARS:
+        return primary
+    if mode == "auto":
+        return ""
+    raise RuntimeError(
+        f"cannot derive a complete {COVER_TEXT_MIN_CHARS}-{COVER_TEXT_MAX_CHARS} character "
+        f"cover topic from title {title!r}; add COVER_TEXT_OVERRIDES[{title!r}]"
+    )
 
 
 def has_cover(text: str) -> bool:
@@ -275,13 +313,35 @@ def summarize_long_article(article: Article) -> str:
 
 
 def image_prompt(article: Article, redraw_guidance: str = "") -> str:
+    if article.text_mode == "never" or not article.cover_text:
+        text_direction = (
+            "Text strategy: textless. Communicate the topic entirely through the visual metaphor. "
+            "Do not render letters, numbers, labels, decorative pseudo-text, or watermarks."
+        )
+    else:
+        glyphs = " / ".join(article.cover_text)
+        presentation = article.text_presentation or (
+            "choose a scene-integrated carrier and position that fits the concept, such as a speech "
+            "bubble, computer screen, phone interface, sticky note, sign, book page, whiteboard, badge, "
+            "or a separate title area only when that is the strongest composition; do not default to "
+            "a centered headline"
+        )
+        requirement = "required" if article.text_mode == "always" else "optional"
+        text_direction = (
+            f"Text strategy: {requirement}. Candidate phrase (verbatim): \"{article.cover_text}\". "
+            f"Exact glyph sequence: {glyphs}. Presentation: {presentation}. "
+            "If the phrase is rendered, show it exactly once with no missing, substituted, repeated, "
+            "or additional characters and no other text. In optional mode, omit it when the visual "
+            "metaphor communicates the theme more clearly without words."
+        )
     prompt = (
         "Create a wide 16:9 static blog article cover. Use a polished colorful cartoon "
         "and technology editorial illustration style, friendly chibi proportions, crisp "
         "shapes, one clear focal metaphor, expressive but uncluttered composition, and "
         "readability at thumbnail size. Avoid dense flowcharts, large code blocks, tiny "
         "labels, generic server racks, photorealism, watermarks, copied logos, and official "
-        "character designs. Prefer short keywords or no text.\n"
+        "character designs. Do not default to a centered or top headline.\n"
+        f"{text_direction}\n"
         f"Article title: {article.title}\n"
         f"Article summary: {article.summary}\n"
         f"Relevant headings: {truncate('；'.join(m.group(1).strip() for m in HEADING_RE.finditer(article.body)), 500)}\n"
@@ -471,6 +531,9 @@ def show_candidate(article: Article, temporary: Path) -> None:
     print("\n" + "=" * 72)
     print(f"文章：{article.path}")
     print(f"标题：{article.title}")
+    print(f"文字策略：{article.text_mode}")
+    print(f"候选文字：{article.cover_text or '无'}")
+    print(f"文字载体：{article.text_presentation or '由画面语境决定'}")
     print(f"图片：{temporary}")
     print(f"摘要来源：{article.summary_source}；摘要长度：{len(article.summary)}")
     print(f"提示词：{truncate(article.prompt, 900)}")
@@ -522,6 +585,9 @@ def approve(article: Article, temporary: Path, state: RunState) -> str:
 
 def process_article(article: Article) -> None:
     summarize_long_article(article)
+    article.text_mode = text_mode_for(article.title)
+    article.cover_text = topic_text(article.title, article.text_mode)
+    article.text_presentation = COVER_TEXT_PRESENTATION_OVERRIDES.get(article.title, "").strip()
     article.prompt = image_prompt(article)
     if len(article.prompt) > IMAGE_PROMPT_MAX_CHARS:
         raise RuntimeError("image prompt exceeded local safety limit")

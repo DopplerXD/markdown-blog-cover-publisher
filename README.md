@@ -14,6 +14,10 @@
 
 脚本会检索新建且尚未有封面的 Markdown 文件，先批量生成临时封面，再在终端逐篇等待审批：
 
+封面文字不是必需元素。脚本可根据配置选择无文字、强制文字或自动判断；需要文字时，
+可以把主题词自然放进对话气泡、电脑屏幕、便签、标牌等场景元素，不默认使用居中标题。
+候选预览会显示文字策略、候选词句和呈现指导，便于核对错字、漏字与意外文字。
+
 | 输入 | 操作 |
 | --- | --- |
 | `1` | 保存、提交并推送 |
@@ -33,6 +37,9 @@
 - `FINAL_IMAGE_ROOT`：正式图片根目录；为空时写入文章目录下的 `assets/<文章标题>/`。
 - `QWEN_SUMMARY_API_URL`、`QWEN_SUMMARY_API_KEY`、`QWEN_SUMMARY_MODEL`：摘要模型配置。
 - `IMAGE_API_URL`、`IMAGE_API_KEY`、`IMAGE_MODEL`：图像模型配置。
+- `COVER_TEXT_MODE`：`auto`、`always` 或 `never`，控制文字为可选、必需或禁用。
+- `COVER_TEXT_OVERRIDES`：按完整文章标题指定文字；值为空时对该文章禁用文字。
+- `COVER_TEXT_PRESENTATION_OVERRIDES`：指定文字载体和位置，例如对话气泡或电脑屏幕。
 
 默认请求格式是 DashScope 兼容接口。如使用其他服务商，按脚本中的请求体、响应路径和 headers 配置扩展即可。
 
